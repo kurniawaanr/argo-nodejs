@@ -1,39 +1,42 @@
 pipeline {
     agent { node { label 'jenkins-slave' } }
     environment {
-        AWS_ACCOUNT_ID = "361752933564"
-        AWS_DEFAULT_REGION = "ap-south-1"
-        IMAGE_REPO_NAME = "x-non-prod-ecr"
-        IMAGE_NAME = "x-app"
+        AZURE_ACR_NAME = "gitopscr" // Set your Azure ACR name
+        AZURE_ACR_LOGIN_SERVER = "${AZURE_ACR_NAME}.azurecr.io"
+        IMAGE_REPO_NAME = "demo-non-prod-acr"
+        IMAGE_NAME = "demo-app"
         COMMIT_ID = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-        REPOSITORY_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}"
+        REPOSITORY_URI = "${AZURE_ACR_LOGIN_SERVER}/${IMAGE_REPO_NAME}"
     }
 
     stages {
-        stage('Logging into AWS ECR') {
+        stage('Logging into Azure ACR') {
             steps {
                 script {
-                    sh "aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+                    withCredentials([azureServicePrincipal(credentialsId: 'gitopscr', tenant: 'e0b4f324-7be5-470e-bfd9-e61285d13e27', subscriptionId: 'your-subscription-id')]) {
+                        sh """
+                            az login --service-principal -u ${env.AZURE_CLIENT_ID} -p ${env.AZURE_CLIENT_SECRET} --tenant ${env.AZURE_TENANT_ID}
+                            az acr login --name ${AZURE_ACR_NAME}
+                        """
+                    }
                 }
             }
         }
 
         stage('Cloning Git repo of application code') {
             steps {
-                 
-                 dir ('/opt/build/workspace/project-x-multibranch_main/application_code'){
+                dir('/opt/build/workspace/project-x-multibranch_main/application_code') {
                     checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'project-x', url: 'https://github.com/Abhijith769/project-x.git']])
+                }
             }
-          }        
         }
 
-        stage('Cloning Git repo of helm temlate') {
+        stage('Cloning Git repo of helm template') {
             steps {
-                 
-                 dir ('/opt/build/workspace/project-x-multibranch_main/helm_template'){
+                dir('/opt/build/workspace/project-x-multibranch_main/helm_template') {
                     checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'project-x', url: 'https://github.com/Abhijith769/project-x-helm.git']])
+                }
             }
-          }        
         }
 
         stage('Building image') {
@@ -44,7 +47,7 @@ pipeline {
             }
         }
 
-        stage('Pushing to ECR') {
+        stage('Pushing to ACR') {
             steps {
                 script {
                     def tag = "${IMAGE_NAME}_${COMMIT_ID}"
@@ -57,7 +60,6 @@ pipeline {
         stage('Update Helm Chart Image Tag') {
             steps {
                 script {
-
                     // Print the working directory
                     sh 'pwd'
 
@@ -75,7 +77,7 @@ pipeline {
                         sh "git -C ${helmChartPath} config --local credential.helper '!f() { echo username=${GIT_USERNAME}; echo password=${GIT_PASSWORD}; }; f'"
                         sh "git -C ${helmChartPath} add ${valuesFilePath}"
                         sh "git -C ${helmChartPath} commit -m 'Update image tag'"
-                                                
+                        
                         // Push the merged changes
                         sh "git -C ${helmChartPath} push origin HEAD:main"
                     }
@@ -83,4 +85,4 @@ pipeline {
             }
         }
     }
-}               
+}

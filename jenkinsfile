@@ -3,7 +3,7 @@ pipeline {
     environment {
         AZURE_ACR_NAME = "gitopscr" // Set your Azure ACR name
         AZURE_ACR_LOGIN_SERVER = "${AZURE_ACR_NAME}.azurecr.io"
-        IMAGE_REPO_NAME = "demo-non-prod-acr"
+        IMAGE_REPO_NAME = "demo-app-acr"
         IMAGE_NAME = "demo-app"
         COMMIT_ID = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
         REPOSITORY_URI = "${AZURE_ACR_LOGIN_SERVER}/${IMAGE_REPO_NAME}"
@@ -13,9 +13,9 @@ pipeline {
         stage('Logging into Azure ACR') {
             steps {
                 script {
-                    withCredentials([azureServicePrincipal(credentialsId: 'gitopscr', tenant: 'e0b4f324-7be5-470e-bfd9-e61285d13e27', subscriptionId: 'your-subscription-id')]) {
+                    withCredentials([usernamePassword(credentialsId: 'azure-acr-credentials', passwordVariable: 'AZURE_ACR_PASSWORD', usernameVariable: 'AZURE_ACR_USERNAME')]) {
                         sh """
-                            az login --service-principal -u ${env.AZURE_CLIENT_ID} -p ${env.AZURE_CLIENT_SECRET} --tenant ${env.AZURE_TENANT_ID}
+                            az login --username ${AZURE_ACR_USERNAME} --password ${AZURE_ACR_PASSWORD}
                             az acr login --name ${AZURE_ACR_NAME}
                         """
                     }
@@ -25,16 +25,16 @@ pipeline {
 
         stage('Cloning Git repo of application code') {
             steps {
-                dir('/opt/build/workspace/project-x-multibranch_main/application_code') {
-                    checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'project-x', url: 'https://github.com/Abhijith769/project-x.git']])
+                dir('/opt/build/workspace/demo-app-multibranch/application_code') {
+                    checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'demo-app', url: 'https://github.com/kurniawaanr/argo-nodejs.git']])
                 }
             }
         }
 
         stage('Cloning Git repo of helm template') {
             steps {
-                dir('/opt/build/workspace/project-x-multibranch_main/helm_template') {
-                    checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'project-x', url: 'https://github.com/Abhijith769/project-x-helm.git']])
+                dir('/opt/build/workspace/demo-app-multibranch/helm_template') {
+                    checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'demo-app', url: 'https://github.com/kurniawaanr/argo-helm.git']])
                 }
             }
         }
@@ -66,14 +66,14 @@ pipeline {
                     // List files in the current directory
                     sh 'ls'
 
-                    def helmChartPath = '/opt/build/workspace/project-x-multibranch_main/helm_template/helm-chart'  // Path to your Helm Chart folder in the Git repo
+                    def helmChartPath = '/opt/build/workspace/demo-app-multibranch_main/helm_template/helm-chart'  // Path to your Helm Chart folder in the Git repo
                     def valuesFilePath = "${helmChartPath}/values.yaml"
                     
                     // Replace the image tag in the values.yaml file
                     sh "sed -i 's/tag:.*/tag: ${IMAGE_NAME}_${COMMIT_ID}/' ${valuesFilePath}"
                     
                     // Configure Git to use provided credentials
-                    withCredentials([usernamePassword(credentialsId: 'project-x', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                    withCredentials([usernamePassword(credentialsId: 'demo-app', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
                         sh "git -C ${helmChartPath} config --local credential.helper '!f() { echo username=${GIT_USERNAME}; echo password=${GIT_PASSWORD}; }; f'"
                         sh "git -C ${helmChartPath} add ${valuesFilePath}"
                         sh "git -C ${helmChartPath} commit -m 'Update image tag'"
